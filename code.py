@@ -514,20 +514,68 @@ def main():
 
     components.html(voice_interface_html, height=300)
 
-    # Process voice queries from URL params (primary method)
-    voice_query = st.query_params.get("voice_query")
+    # Check multiple sources for voice input
+    voice_query = None
+    voice_timestamp = None
+    
+    # Method 1: Check URL parameters
+    url_query = st.query_params.get("voice_query")
+    url_timestamp = st.query_params.get("voice_timestamp")
+    
+    if url_query and url_timestamp:
+        voice_query = url_query
+        voice_timestamp = url_timestamp
+        st.query_params.clear()  # Clear to prevent reprocessing
+    
+    # Method 2: Check for sessionStorage data via JavaScript
+    if not voice_query:
+        session_check_js = """
+        <script>
+        (function() {
+            if (typeof(Storage) !== "undefined") {
+                const query = sessionStorage.getItem('voiceQuery');
+                const timestamp = sessionStorage.getItem('voiceTimestamp');
+                if (query && timestamp) {
+                    // Clear the stored data
+                    sessionStorage.removeItem('voiceQuery');
+                    sessionStorage.removeItem('voiceTimestamp');
+                    
+                    // Send to Streamlit via URL update
+                    const url = new URL(window.location);
+                    url.searchParams.set('js_voice_query', encodeURIComponent(query));
+                    url.searchParams.set('js_voice_timestamp', timestamp);
+                    if (window.location.href !== url.toString()) {
+                        window.location.href = url.toString();
+                    }
+                }
+            }
+        })();
+        </script>
+        """
+        components.html(session_check_js, height=0)
+        
+        # Check for JavaScript-sourced query
+        js_query = st.query_params.get("js_voice_query")
+        js_timestamp = st.query_params.get("js_voice_timestamp")
+        
+        if js_query and js_timestamp:
+            voice_query = js_query
+            voice_timestamp = js_timestamp
+            st.query_params.clear()
+    
+    # Process voice query if found
     if voice_query and not st.session_state.processing:
         st.session_state.processing = True
         
-        # Clear URL params to prevent re-processing
-        st.query_params.clear()
-        
         # Decode the query
         try:
-            decoded_query = voice_query
-            st.session_state.voice_result = decoded_query
+            import urllib.parse
+            decoded_query = urllib.parse.unquote(voice_query)
         except:
             decoded_query = voice_query
+        
+        # Store in session state
+        st.session_state.voice_result = decoded_query
         
         # Process through unified pipeline
         with st.spinner("🤖 Bob is processing your request..."):
@@ -537,8 +585,17 @@ def main():
         st.session_state.processing = False
         
         # Add restart button
-        if st.button("🎤 Ask Another Question", type="primary"):
-            st.rerun()
+        col1, col2 = st.columns([1, 1])
+        with col1:
+            if st.button("🎤 Ask Another Question", type="primary"):
+                st.rerun()
+        with col2:
+            if st.button("🔄 Reset & Try Again", type="secondary"):
+                # Clear any stuck states
+                for key in ['processing', 'voice_result']:
+                    if key in st.session_state:
+                        del st.session_state[key]
+                st.rerun()
 
     # Alternative: Check for voice result in session state
     elif st.session_state.voice_result and not st.session_state.processing:
@@ -572,12 +629,18 @@ def main():
                     Your conversation will appear here.</p>
                     
                     <div style="margin: 20px 0; padding: 15px; background: #fff3cd; border-radius: 8px; border-left: 4px solid #ffc107;">
-                        <strong>⚠️ Troubleshooting Tips:</strong><br>
-                        • Use <strong>Chrome or Edge</strong> browser<br>
-                        • Allow <strong>microphone permissions</strong><br>
-                        • Speak clearly after "Hey Bob"<br>
-                        • Check your internet connection<br>
-                        • If issues persist, try the text input below
+                        <strong>⚠️ Voice Input Not Working?</strong><br><br>
+                        <strong>Quick Diagnostics:</strong><br>
+                        • Browser: Use <strong>Chrome or Edge</strong> (required)<br>
+                        • Microphone: Click 🎤 and <strong>allow permissions</strong><br>
+                        • Speech: Say <strong>"Hey Bob, what time is it?"</strong> clearly<br>
+                        • Network: Voice recognition needs <strong>internet connection</strong><br><br>
+                        
+                        <strong>Still not working?</strong><br>
+                        • Try the <strong>text input below</strong> ⌨️<br>
+                        • Click <strong>"Reset & Try Again"</strong> if processing is stuck<br>
+                        • Check <strong>System Status</strong> for API issues<br>
+                        • Refresh the page and try again
                     </div>
                 </div>
             </div>
@@ -659,12 +722,29 @@ def main():
             st.write("**Debug Info:**")
             st.write(f"- Processing: {st.session_state.processing}")
             st.write(f"- Voice Result: {st.session_state.voice_result}")
-            st.write(f"- URL Params: {dict(st.query_params)}")
+            st.write(f"- URL Params: {dict(st.query_params) if st.query_params else 'None'}")
+            st.write(f"- User Agent: {st.context.headers.get('user-agent', 'Unknown')[:50]}..." if hasattr(st.context, 'headers') else "- User Agent: Check browser")
             
             if st.button("🔄 Reset Session"):
                 for key in list(st.session_state.keys()):
                     del st.session_state[key]
                 st.rerun()
+            
+            # Test microphone access
+            if st.button("🎙️ Test Microphone"):
+                test_mic_js = """
+                <script>
+                navigator.mediaDevices.getUserMedia({audio: true})
+                    .then(function(stream) {
+                        alert('✅ Microphone access granted! Voice input should work.');
+                        stream.getTracks().forEach(track => track.stop());
+                    })
+                    .catch(function(err) {
+                        alert('❌ Microphone access denied: ' + err.message);
+                    });
+                </script>
+                """
+                components.html(test_mic_js, height=0)
 
     # Usage Instructions
     st.markdown("---")
