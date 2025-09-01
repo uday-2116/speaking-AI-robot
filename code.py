@@ -58,28 +58,158 @@ def get_agent():
         st.error(f"❌ Error initializing agent: {e}")
         return None
 
-def get_ai_response(query):
-    """Get response from AI agent."""
+def process_query(query, source_type="voice"):
+    """
+    Unified pipeline for processing both voice and text queries.
+    This function handles the complete flow from query to response.
+    """
     agent = get_agent()
     if agent is None:
         return "Sorry, I'm having trouble connecting to my knowledge base right now."
     
     try:
+        # Process through AI agent
         response = agent.run(query)
-        return response.content.strip()
+        result = response.content.strip()
+        
+        # Add to conversation history
+        st.session_state.conversation_history.append({
+            "user": query,
+            "bob": result,
+            "timestamp": time.strftime("%H:%M:%S"),
+            "type": source_type
+        })
+        
+        return result
+        
     except Exception as e:
-        return f"Sorry, I encountered an error while processing your question: {str(e)}"
+        error_msg = f"Sorry, I encountered an error while processing your question: {str(e)}"
+        return error_msg
+
+def display_response(query, response, source_type="voice"):
+    """Display the query and response in the output window."""
+    
+    # Display user query
+    query_icon = "🎙️" if source_type == "voice" else "⌨️"
+    st.markdown(f'''
+    <div style="background: #f8f9fa; padding: 15px; border-radius: 10px; margin: 10px 0; border-left: 4px solid #007bff;">
+        {query_icon} <strong>You:</strong> {query}
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    # Display Bob's response
+    st.markdown(f'''
+    <div style="background: linear-gradient(135deg, #28a745, #20c997); color: white; padding: 20px; border-radius: 15px; margin: 10px 0; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+        🤖 <strong>Bob:</strong><br><br>{response}
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    # Voice playback for responses
+    if source_type == "voice":
+        add_voice_playback(response)
+
+def add_voice_playback(response):
+    """Add voice playback functionality for Bob's responses."""
+    import streamlit.components.v1 as components
+    
+    # Clean response for speech synthesis
+    clean_response = response.replace('"', "'").replace('\n', ' ').replace('`', '').replace('*', '').replace('#', '')
+    
+    voice_html = f"""
+    <div style="text-align: center; margin: 20px 0; padding: 20px; background: #e8f5e8; border-radius: 15px;">
+        <h4 style="color: #28a745; margin-bottom: 15px;">🔊 Voice Response</h4>
+        
+        <button onclick="speakResponse()" style="
+            padding: 12px 25px; 
+            background: #28a745; 
+            color: white; 
+            border: none; 
+            border-radius: 8px; 
+            cursor: pointer; 
+            font-size: 16px;
+            margin: 5px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        ">🎙️ Play Response</button>
+        
+        <button onclick="stopSpeaking()" style="
+            padding: 12px 25px; 
+            background: #dc3545; 
+            color: white; 
+            border: none; 
+            border-radius: 8px; 
+            cursor: pointer; 
+            font-size: 16px;
+            margin: 5px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        ">⏹️ Stop</button>
+        
+        <div id="speakStatus" style="margin-top: 10px; font-size: 14px; color: #666;"></div>
+    </div>
+
+    <script>
+    const responseText = `{clean_response}`;
+    
+    function speakResponse() {{
+        if ('speechSynthesis' in window) {{
+            speechSynthesis.cancel();
+            
+            const utterance = new SpeechSynthesisUtterance(responseText);
+            utterance.rate = 0.85;
+            utterance.pitch = 1.0;
+            utterance.volume = 1.0;
+            
+            // Set natural voice
+            const voices = speechSynthesis.getVoices();
+            const preferredVoice = voices.find(voice => 
+                voice.name.includes('Google') || 
+                voice.name.includes('Natural') || 
+                voice.lang === 'en-US'
+            );
+            if (preferredVoice) utterance.voice = preferredVoice;
+            
+            utterance.onstart = () => {{
+                document.getElementById('speakStatus').innerHTML = '🔊 Speaking...';
+            }};
+            
+            utterance.onend = () => {{
+                document.getElementById('speakStatus').innerHTML = '✅ Complete';
+                setTimeout(() => {{
+                    document.getElementById('speakStatus').innerHTML = '';
+                }}, 2000);
+            }};
+            
+            utterance.onerror = (event) => {{
+                document.getElementById('speakStatus').innerHTML = '❌ Error: ' + event.error;
+            }};
+            
+            speechSynthesis.speak(utterance);
+        }} else {{
+            document.getElementById('speakStatus').innerHTML = '❌ Speech not supported';
+        }}
+    }}
+    
+    function stopSpeaking() {{
+        if ('speechSynthesis' in window) {{
+            speechSynthesis.cancel();
+            document.getElementById('speakStatus').innerHTML = '⏹️ Stopped';
+        }}
+    }}
+    
+    // Auto-play after 1 second
+    setTimeout(speakResponse, 1000);
+    </script>
+    """
+    
+    components.html(voice_html, height=150)
 
 def main():
     # Initialize session state
     if 'conversation_history' not in st.session_state:
         st.session_state.conversation_history = []
-    if 'assistant_active' not in st.session_state:
-        st.session_state.assistant_active = False
-    if 'last_query' not in st.session_state:
-        st.session_state.last_query = ""
+    if 'processing' not in st.session_state:
+        st.session_state.processing = False
 
-    # Custom CSS for a modern voice assistant look
+    # Custom CSS
     st.markdown("""
     <style>
     .main-header {
@@ -90,28 +220,21 @@ def main():
         border-radius: 15px;
         margin-bottom: 2rem;
     }
-    .voice-status {
-        font-size: 1.5rem;
-        margin: 1rem 0;
-    }
-    .conversation-bubble {
-        background: #f8f9fa;
-        padding: 15px;
-        border-radius: 15px;
-        margin: 10px 0;
-        border-left: 4px solid #007bff;
-    }
-    .bob-response {
-        background: linear-gradient(135deg, #28a745, #20c997);
+    .voice-interface {
+        background: linear-gradient(135deg, #74b9ff, #0984e3);
+        border-radius: 20px;
+        margin: 20px 0;
         color: white;
-        padding: 20px;
-        border-radius: 15px;
-        margin: 10px 0;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        padding: 30px;
+        text-align: center;
     }
-    .wake-word {
-        color: #dc3545;
-        font-weight: bold;
+    .output-window {
+        background: #f8f9fa;
+        border-radius: 15px;
+        padding: 20px;
+        margin: 20px 0;
+        border: 2px solid #e9ecef;
+        min-height: 200px;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -120,486 +243,366 @@ def main():
     st.markdown("""
     <div class="main-header">
         <h1>🤖 Hey Bob</h1>
-        <p>Your Voice-Activated AI Assistant</p>
-        <p style="font-size: 0.9rem; opacity: 0.8;">Say <span class="wake-word">"Hey Bob"</span> followed by your question</p>
+        <p>Streamlined Voice Assistant</p>
+        <p style="font-size: 0.9rem; opacity: 0.8;">Say <span style="color: #dc3545; font-weight: bold;">"Hey Bob"</span> followed by your question</p>
     </div>
     """, unsafe_allow_html=True)
 
-    # Voice Assistant Interface
+    # Voice Input Interface
     import streamlit.components.v1 as components
     
-    # Main voice interface with wake word detection
-    voice_assistant_html = f"""
-    <div style="text-align: center; padding: 40px; background: linear-gradient(135deg, #74b9ff, #0984e3); border-radius: 20px; margin: 20px 0; color: white;">
-        
+    voice_interface_html = """
+    <div class="voice-interface">
         <!-- Assistant Status -->
-        <div id="assistantStatus" style="font-size: 24px; margin-bottom: 20px; font-weight: bold;">
-            🎤 Assistant Ready
+        <div id="status" style="font-size: 20px; margin-bottom: 20px; font-weight: bold;">
+            🎤 Ready to Listen
         </div>
         
-        <!-- Main Control Button -->
-        <button id="mainBtn" style="
-            font-size: 80px; 
+        <!-- Main Microphone Button -->
+        <button id="micBtn" style="
+            font-size: 70px; 
             background: rgba(255,255,255,0.2); 
             border: 3px solid white; 
             border-radius: 50%; 
             cursor: pointer; 
-            padding: 25px;
+            padding: 20px;
             transition: all 0.3s;
             color: white;
-            margin-bottom: 20px;
+            margin-bottom: 15px;
         ">🎤</button>
         
-        <!-- Status Messages -->
-        <div id="listeningStatus" style="font-size: 18px; margin: 15px 0; min-height: 30px;">
-            Click to start continuous listening
-        </div>
-        
-        <!-- Transcript Display -->
-        <div id="transcriptDisplay" style="
+        <!-- Live Transcript -->
+        <div id="liveTranscript" style="
             background: rgba(255,255,255,0.9); 
             color: #333; 
-            padding: 15px; 
-            border-radius: 10px; 
+            padding: 12px; 
+            border-radius: 8px; 
             margin: 15px 0; 
-            min-height: 50px;
+            min-height: 40px;
             display: none;
             font-family: monospace;
+            font-size: 14px;
         ">
-            Transcript will appear here...
+            Transcript appears here...
         </div>
         
-        <!-- Controls -->
-        <div style="margin-top: 20px;">
+        <!-- Control Buttons -->
+        <div style="margin-top: 15px;">
             <button id="stopBtn" style="
-                padding: 10px 20px; 
+                padding: 8px 16px; 
                 background: #dc3545; 
                 color: white; 
                 border: none; 
-                border-radius: 8px; 
+                border-radius: 6px; 
                 cursor: pointer;
-                margin: 5px;
+                margin: 3px;
                 display: none;
-            ">⏹️ Stop Listening</button>
+            ">⏹️ Stop</button>
         </div>
     </div>
 
     <script>
     let recognition;
     let isListening = false;
-    let continuousMode = false;
 
-    const mainBtn = document.getElementById('mainBtn');
-    const status = document.getElementById('listeningStatus');
-    const assistantStatus = document.getElementById('assistantStatus');
-    const transcript = document.getElementById('transcriptDisplay');
+    const micBtn = document.getElementById('micBtn');
+    const status = document.getElementById('status');
+    const transcript = document.getElementById('liveTranscript');
     const stopBtn = document.getElementById('stopBtn');
 
-    // Check for wake word
-    function checkWakeWord(text) {{
+    // Check for wake word and extract command
+    function checkWakeWord(text) {
         const lowerText = text.toLowerCase();
-        const wakeWords = ['hey bob', 'hi bob', 'hello bob', 'bob'];
+        const wakeWords = ['hey bob', 'hi bob', 'hello bob'];
         
-        for (let wake of wakeWords) {{
-            if (lowerText.includes(wake)) {{
-                // Extract the command after wake word
+        for (let wake of wakeWords) {
+            if (lowerText.includes(wake)) {
                 const wakeIndex = lowerText.indexOf(wake);
                 const command = text.substring(wakeIndex + wake.length).trim();
-                return command || text; // Return command or full text if no command after wake word
-            }}
-        }}
+                return command || text;
+            }
+        }
         return null;
-    }}
+    }
 
-    // Process voice command
-    function processCommand(command) {{
-        transcript.innerHTML = `🎙️ <strong>You:</strong> "${{command}}"`;
-        transcript.style.display = 'block';
+    // Send query to Streamlit (unified pipeline entry point)
+    function sendToStreamlit(query) {
+        transcript.innerHTML = `✅ Processing: "${query}"`;
         status.innerHTML = '🤖 Bob is thinking...';
-        assistantStatus.innerHTML = '🧠 Processing...';
         
-        // Send to Streamlit
+        // Use Streamlit's query params to trigger processing
         const url = new URL(window.location);
-        url.searchParams.set('hey_bob_query', encodeURIComponent(command));
+        url.searchParams.set('voice_query', encodeURIComponent(query));
         url.searchParams.set('timestamp', Date.now());
         window.location.href = url.toString();
-    }}
+    }
 
-    // Start recognition
-    function startRecognition() {{
-        if (!('webkitSpeechRecognition' in window || 'SpeechRecognition' in window)) {{
+    // Start speech recognition
+    function startListening() {
+        if (!('webkitSpeechRecognition' in window || 'SpeechRecognition' in window)) {
             status.innerHTML = '❌ Speech recognition not supported. Use Chrome!';
             return;
-        }}
+        }
 
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         recognition = new SpeechRecognition();
         
-        recognition.continuous = true;  // Keep listening
+        recognition.continuous = true;
         recognition.interimResults = true;
         recognition.lang = 'en-US';
 
-        recognition.onstart = function() {{
+        recognition.onstart = function() {
             isListening = true;
-            continuousMode = true;
-            mainBtn.style.background = 'rgba(255,0,0,0.3)';
-            mainBtn.style.transform = 'scale(1.1)';
-            assistantStatus.innerHTML = '👂 Listening for "Hey Bob"...';
-            status.innerHTML = 'Say <strong>"Hey Bob"</strong> followed by your question';
+            micBtn.style.background = 'rgba(255,0,0,0.4)';
+            micBtn.style.transform = 'scale(1.1)';
+            status.innerHTML = '👂 Listening for "Hey Bob"...';
             stopBtn.style.display = 'inline-block';
             transcript.style.display = 'block';
-            transcript.innerHTML = '🎧 Listening... Say "Hey Bob" to activate';
-        }};
+            transcript.innerHTML = '🎧 Listening... Say "Hey Bob" + your question';
+        };
 
-        recognition.onresult = function(event) {{
+        recognition.onresult = function(event) {
             let finalTranscript = '';
             let interimTranscript = '';
             
-            for (let i = event.resultIndex; i < event.results.length; i++) {{
+            for (let i = event.resultIndex; i < event.results.length; i++) {
                 const transcriptPart = event.results[i][0].transcript;
-                if (event.results[i].isFinal) {{
+                if (event.results[i].isFinal) {
                     finalTranscript += transcriptPart;
-                }} else {{
+                } else {
                     interimTranscript += transcriptPart;
-                }}
-            }}
+                }
+            }
             
             // Show live transcript
-            if (interimTranscript) {{
-                transcript.innerHTML = `🎧 Listening: "${{interimTranscript}}"`;
-            }}
+            if (interimTranscript) {
+                transcript.innerHTML = `🎧 Hearing: "${interimTranscript}"`;
+            }
             
-            // Check for wake word in final transcript
-            if (finalTranscript) {{
+            // Process final transcript
+            if (finalTranscript) {
                 const command = checkWakeWord(finalTranscript);
-                if (command) {{
-                    // Wake word detected!
-                    assistantStatus.innerHTML = '🎯 Wake word detected!';
+                if (command) {
+                    // Wake word detected - send to unified pipeline
                     recognition.stop();
-                    processCommand(command);
-                }} else {{
-                    // Continue listening
-                    transcript.innerHTML = `🎧 Heard: "${{finalTranscript}}" (no wake word)`;
-                    setTimeout(() => {{
-                        transcript.innerHTML = '🎧 Listening... Say "Hey Bob" to activate';
-                    }}, 2000);
-                }}
-            }}
-        }};
+                    sendToStreamlit(command);
+                } else {
+                    // No wake word - continue listening
+                    transcript.innerHTML = `🎧 Heard: "${finalTranscript}" (waiting for "Hey Bob")`;
+                    setTimeout(() => {
+                        if (isListening) {
+                            transcript.innerHTML = '🎧 Listening... Say "Hey Bob" + your question';
+                        }
+                    }, 2000);
+                }
+            }
+        };
 
-        recognition.onerror = function(event) {{
-            status.innerHTML = `❌ Error: ${{event.error}}`;
-            assistantStatus.innerHTML = '❌ Error occurred';
-            
-            if (event.error === 'not-allowed') {{
-                status.innerHTML = '🔒 Please allow microphone access and refresh';
-            }} else if (event.error === 'no-speech') {{
-                // Restart recognition for continuous listening
-                if (continuousMode) {{
-                    setTimeout(() => {{
-                        if (continuousMode) recognition.start();
-                    }}, 1000);
-                }}
-            }}
-        }};
+        recognition.onerror = function(event) {
+            if (event.error === 'not-allowed') {
+                status.innerHTML = '🔒 Microphone access denied. Please refresh and allow.';
+            } else if (event.error === 'no-speech') {
+                // Auto-restart for continuous listening
+                if (isListening) {
+                    setTimeout(() => {
+                        if (isListening) recognition.start();
+                    }, 1000);
+                }
+            } else {
+                status.innerHTML = `❌ Error: ${event.error}`;
+            }
+        };
 
-        recognition.onend = function() {{
-            mainBtn.style.background = 'rgba(255,255,255,0.2)';
-            mainBtn.style.transform = 'scale(1)';
+        recognition.onend = function() {
+            micBtn.style.background = 'rgba(255,255,255,0.2)';
+            micBtn.style.transform = 'scale(1)';
             
-            if (continuousMode) {{
-                // Restart for continuous listening
-                setTimeout(() => {{
-                    if (continuousMode && recognition) {{
-                        try {{
+            if (isListening) {
+                // Auto-restart for continuous listening
+                setTimeout(() => {
+                    if (isListening && recognition) {
+                        try {
                             recognition.start();
-                        }} catch (e) {{
+                        } catch (e) {
                             console.log('Recognition restart failed:', e);
-                        }}
-                    }}
-                }}, 100);
-            }} else {{
-                isListening = false;
-                assistantStatus.innerHTML = '🎤 Assistant Ready';
-                status.innerHTML = 'Click to start continuous listening';
+                        }
+                    }
+                }, 100);
+            } else {
+                status.innerHTML = '🎤 Ready to Listen';
                 stopBtn.style.display = 'none';
-            }}
-        }};
+                transcript.style.display = 'none';
+            }
+        };
 
         recognition.start();
-    }}
+    }
 
     // Stop listening
-    function stopListening() {{
-        continuousMode = false;
+    function stopListening() {
         isListening = false;
-        if (recognition) {{
+        if (recognition) {
             recognition.stop();
-        }}
-        mainBtn.style.background = 'rgba(255,255,255,0.2)';
-        mainBtn.style.transform = 'scale(1)';
-        assistantStatus.innerHTML = '🎤 Assistant Ready';
-        status.innerHTML = 'Click to start continuous listening';
+        }
+        micBtn.style.background = 'rgba(255,255,255,0.2)';
+        micBtn.style.transform = 'scale(1)';
+        status.innerHTML = '🎤 Ready to Listen';
         stopBtn.style.display = 'none';
         transcript.style.display = 'none';
-    }}
+    }
 
     // Event listeners
-    mainBtn.addEventListener('click', function() {{
-        if (!isListening) {{
-            startRecognition();
-        }}
-    }});
+    micBtn.addEventListener('click', function() {
+        if (!isListening) {
+            startListening();
+        }
+    });
 
     stopBtn.addEventListener('click', stopListening);
-
-    // Auto-start on page load (optional)
-    // Uncomment the next line to auto-start listening
-    // setTimeout(startRecognition, 2000);
     </script>
     """
 
-    components.html(voice_assistant_html, height=400)
+    components.html(voice_interface_html, height=300)
 
-    # Process "Hey Bob" commands
-    hey_bob_query = st.query_params.get("hey_bob_query")
-    if hey_bob_query:
-        # Clear URL params immediately
+    # Process voice queries from URL params (unified entry point)
+    voice_query = st.query_params.get("voice_query")
+    if voice_query and not st.session_state.processing:
+        st.session_state.processing = True
+        
+        # Clear URL params
         st.query_params.clear()
         
-        # Display the command
-        st.markdown(f'<div class="conversation-bubble">🎙️ <strong>You said:</strong> "Hey Bob, {hey_bob_query}"</div>', unsafe_allow_html=True)
+        # Process through unified pipeline
+        with st.spinner("🤖 Bob is processing your request..."):
+            response = process_query(voice_query, "voice")
+            display_response(f"Hey Bob, {voice_query}", response, "voice")
         
-        # Get Bob's response
-        with st.spinner("🤖 Bob is analyzing and preparing response..."):
-            try:
-                ai_response = get_ai_response(hey_bob_query)
-                
-                # Display Bob's response
-                st.markdown(f'<div class="bob-response">🤖 <strong>Bob responds:</strong><br><br>{ai_response}</div>', unsafe_allow_html=True)
-                
-                # Add to conversation history
-                st.session_state.conversation_history.append({
-                    "user": f"Hey Bob, {hey_bob_query}",
-                    "bob": ai_response,
-                    "timestamp": time.strftime("%H:%M:%S"),
-                    "type": "voice"
-                })
-                
-                # Voice response
-                clean_response = ai_response.replace('"', "'").replace('\n', ' ').replace('`', '').replace('*', '').replace('#', '')
-                
-                voice_response_html = f"""
-                <div style="text-align: center; margin: 20px 0; padding: 20px; background: #e8f5e8; border-radius: 15px;">
-                    <h3 style="color: #28a745; margin-bottom: 15px;">🔊 Bob's Voice Response</h3>
-                    
-                    <button onclick="speakBobResponse()" style="
-                        padding: 15px 30px; 
-                        background: #28a745; 
-                        color: white; 
-                        border: none; 
-                        border-radius: 10px; 
-                        cursor: pointer; 
-                        font-size: 18px;
-                        margin: 10px;
-                        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-                    ">🎙️ Play Response</button>
-                    
-                    <button onclick="restartListening()" style="
-                        padding: 15px 30px; 
-                        background: #007bff; 
-                        color: white; 
-                        border: none; 
-                        border-radius: 10px; 
-                        cursor: pointer; 
-                        font-size: 18px;
-                        margin: 10px;
-                        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-                    ">🎤 Ask Another Question</button>
-                    
-                    <div id="voiceStatus" style="margin-top: 15px; font-size: 16px; color: #666;"></div>
-                </div>
+        st.session_state.processing = False
+        
+        # Add restart button
+        if st.button("🎤 Ask Another Question", type="primary"):
+            st.rerun()
 
-                <script>
-                const bobResponse = `{clean_response}`;
-                
-                function speakBobResponse() {{
-                    if ('speechSynthesis' in window) {{
-                        speechSynthesis.cancel();
-                        
-                        const utterance = new SpeechSynthesisUtterance(bobResponse);
-                        utterance.rate = 0.85;
-                        utterance.pitch = 1.0;
-                        utterance.volume = 1.0;
-                        
-                        // Set a more natural voice if available
-                        const voices = speechSynthesis.getVoices();
-                        const preferredVoice = voices.find(voice => 
-                            voice.name.includes('Google') || 
-                            voice.name.includes('Natural') || 
-                            voice.lang === 'en-US'
-                        );
-                        if (preferredVoice) utterance.voice = preferredVoice;
-                        
-                        utterance.onstart = () => {{
-                            document.getElementById('voiceStatus').innerHTML = '🔊 Bob is speaking...';
-                        }};
-                        
-                        utterance.onend = () => {{
-                            document.getElementById('voiceStatus').innerHTML = '✅ Response complete. Ready for next question!';
-                            setTimeout(() => {{
-                                document.getElementById('voiceStatus').innerHTML = '';
-                            }}, 3000);
-                        }};
-                        
-                        utterance.onerror = (event) => {{
-                            document.getElementById('voiceStatus').innerHTML = '❌ Voice playback error: ' + event.error;
-                        }};
-                        
-                        speechSynthesis.speak(utterance);
-                    }} else {{
-                        document.getElementById('voiceStatus').innerHTML = '❌ Text-to-speech not available in this browser';
-                    }}
-                }}
-                
-                function restartListening() {{
-                    // Clear URL and restart page
-                    window.location.href = window.location.pathname;
-                }}
-                
-                // Auto-play Bob's response
-                setTimeout(() => {{
-                    speakBobResponse();
-                }}, 1000);
-                
-                // Load voices (some browsers need this)
-                if ('speechSynthesis' in window) {{
-                    speechSynthesis.onvoiceschanged = function() {{
-                        // Voices loaded
-                    }};
-                }}
-                </script>
-                """
-                
-                components.html(voice_response_html, height=200)
-                
-            except Exception as e:
-                st.error(f"❌ Error getting Bob's response: {e}")
-
-    # Manual text input for testing
+    # Output Window (Below Voice Interface)
     st.markdown("---")
-    st.markdown("### 💬 Text Mode (For Testing)")
+    st.markdown("### 💬 Conversation Output")
+    
+    output_container = st.container()
+    with output_container:
+        # Show recent conversation or placeholder
+        if st.session_state.conversation_history:
+            # Show last conversation
+            last_conv = st.session_state.conversation_history[-1]
+            display_response(last_conv['user'], last_conv['bob'], last_conv['type'])
+        else:
+            st.markdown('''
+            <div class="output-window">
+                <div style="text-align: center; color: #6c757d; padding: 40px;">
+                    <h4>🎯 Ready for Your First Question</h4>
+                    <p>Click the microphone above and say "Hey Bob" followed by your question.<br>
+                    Your conversation will appear here.</p>
+                </div>
+            </div>
+            ''', unsafe_allow_html=True)
+
+    # Manual Text Input (Alternative Entry Point)
+    st.markdown("---")
+    st.markdown("### ⌨️ Text Mode (Alternative Input)")
     
     col1, col2 = st.columns([4, 1])
     with col1:
         manual_input = st.text_input(
-            "Type to test Bob's responses:", 
+            "Type your question:", 
             placeholder="What's the weather like today?",
-            key="manual_test"
+            key="manual_input"
         )
     with col2:
-        if st.button("Test", type="primary"):
+        if st.button("Send", type="primary"):
             if manual_input:
-                with st.spinner("Testing Bob..."):
-                    response = get_ai_response(manual_input)
-                    st.success(f"**Bob:** {response}")
+                # Process through same unified pipeline
+                with st.spinner("🤖 Processing..."):
+                    response = process_query(manual_input, "text")
+                    display_response(manual_input, response, "text")
+                    st.rerun()
 
-    # Quick test buttons
-    st.markdown("**Quick Tests:**")
+    # Quick Test Buttons
+    st.markdown("**🚀 Quick Tests:**")
     col1, col2, col3, col4 = st.columns(4)
     
-    with col1:
-        if st.button("📊 Math Test"):
-            response = get_ai_response("What is 15 times 7?")
-            st.write(f"Bob: {response}")
+    test_queries = [
+        ("📊 Math", "What is 23 times 15?"),
+        ("🌍 Knowledge", "What is the largest ocean?"),
+        ("📰 News", "What's happening in tech news today?"),
+        ("🌤️ Weather", "Weather forecast for San Francisco")
+    ]
     
-    with col2:
-        if st.button("🌍 Knowledge Test"):
-            response = get_ai_response("What is the capital of Japan?")
-            st.write(f"Bob: {response}")
-    
-    with col3:
-        if st.button("📰 News Test"):
-            response = get_ai_response("What's in the news today?")
-            st.write(f"Bob: {response}")
-    
-    with col4:
-        if st.button("🌤️ Weather Test"):
-            response = get_ai_response("What's the weather like in New York?")
-            st.write(f"Bob: {response}")
+    for i, (col, (label, query)) in enumerate(zip([col1, col2, col3, col4], test_queries)):
+        with col:
+            if st.button(label, key=f"test_{i}"):
+                with st.spinner("Testing..."):
+                    response = process_query(query, "test")
+                    display_response(query, response, "test")
+                    st.rerun()
 
-    # Instructions
-    st.markdown("---")
-    st.markdown("### 📋 How to Use Hey Bob")
-    
-    st.markdown("""
-    **🎯 Step-by-Step:**
-    1. **Click the microphone** to start continuous listening
-    2. **Say "Hey Bob"** followed by your question
-    3. **Wait for Bob's response** - he'll speak back to you!
-    4. **Click "Ask Another Question"** to continue
-
-    **🎙️ Example Commands:**
-    - *"Hey Bob, what's the weather today?"*
-    - *"Hey Bob, what is 25 times 4?"*
-    - *"Hey Bob, tell me about artificial intelligence"*
-    - *"Hey Bob, what's happening in the news?"*
-    
-    **⚠️ Troubleshooting:**
-    - Use **Chrome browser** for best results
-    - Allow **microphone permissions** when prompted
-    - Speak **clearly and loudly**
-    - Make sure you're on **HTTPS or localhost**
-    """)
-
-    # Conversation history
-    if st.session_state.conversation_history:
+    # Conversation History
+    if len(st.session_state.conversation_history) > 1:
         st.markdown("---")
-        st.subheader("💬 Recent Conversations with Bob")
+        st.markdown("### 📜 Recent Conversations")
         
-        for i, conv in enumerate(reversed(st.session_state.conversation_history[-5:])):
-            icon = "🎙️" if conv.get('type') == 'voice' else "⌨️"
-            with st.expander(f"{icon} [{conv['timestamp']}] {conv['user'][:50]}..."):
-                st.markdown(f"**You:** {conv['user']}")
-                st.markdown(f"**Bob:** {conv['bob']}")
+        with st.expander(f"Show {len(st.session_state.conversation_history)} previous conversations"):
+            for i, conv in enumerate(reversed(st.session_state.conversation_history[:-1])):
+                icon = "🎙️" if conv['type'] == 'voice' else "⌨️" if conv['type'] == 'text' else "🧪"
+                st.markdown(f"**{icon} [{conv['timestamp']}] You:** {conv['user']}")
+                st.markdown(f"**🤖 Bob:** {conv['bob']}")
+                st.markdown("---")
         
-        # Clear history
-        if st.button("🗑️ Clear Conversation History"):
+        if st.button("🗑️ Clear History"):
             st.session_state.conversation_history = []
             st.rerun()
 
-    # System status
-    st.markdown("---")
-    st.markdown("### ⚙️ System Status")
-    
-    with st.expander("Show System Information"):
-        # API Status
+    # System Information
+    with st.expander("⚙️ System Status"):
         col1, col2 = st.columns(2)
         
         with col1:
-            st.write("**API Keys:**")
-            st.write(f"- Tavily: {'✅ Configured' if TAVILY_API_KEY else '❌ Missing'}")
-            st.write(f"- Google: {'✅ Configured' if GOOGLE_API_KEY else '❌ Missing'}")
+            st.write("**API Status:**")
+            st.write(f"- Tavily: {'✅' if TAVILY_API_KEY else '❌'}")
+            st.write(f"- Google: {'✅' if GOOGLE_API_KEY else '❌'}")
+            st.write(f"- Conversations: {len(st.session_state.conversation_history)}")
         
         with col2:
-            st.write("**Current URL Params:**")
-            if st.query_params:
-                for key, value in st.query_params.items():
-                    st.write(f"- {key}: {value[:50]}...")
-            else:
-                st.write("- None")
-        
-        # Agent test
-        if st.button("🧪 Test AI Agent Connection"):
-            try:
-                agent = get_agent()
-                if agent:
-                    test_response = get_ai_response("Respond with exactly: 'AI agent working perfectly'")
-                    st.success(f"✅ Agent Response: {test_response}")
-                else:
-                    st.error("❌ Agent initialization failed")
-            except Exception as e:
-                st.error(f"❌ Agent test failed: {e}")
+            if st.button("🧪 Test Agent"):
+                try:
+                    test_response = process_query("Say exactly: 'System test successful'", "system")
+                    st.success(f"✅ {test_response}")
+                except Exception as e:
+                    st.error(f"❌ Test failed: {e}")
+
+    # Usage Instructions
+    st.markdown("---")
+    st.markdown("""
+    ### 📋 How It Works
+    
+    **🔄 Unified Processing Pipeline:**
+    1. **Voice Input:** Say "Hey Bob" + question → Speech-to-Text → Processing Pipeline
+    2. **Text Input:** Type question → Direct to Processing Pipeline  
+    3. **Processing:** AI Agent analyzes → Web search if needed → Generate response
+    4. **Output:** Display in output window → Voice playback (for voice queries)
+    
+    **🎯 Features:**
+    - **Wake word detection** ("Hey Bob")
+    - **Continuous listening** mode
+    - **Live transcript** display
+    - **Unified response processing**
+    - **Voice playback** of responses
+    - **Conversation history**
+    
+    **💡 Tips:**
+    - Use **Chrome** for best voice recognition
+    - Speak **clearly** after "Hey Bob"
+    - **Allow microphone** permissions
+    - Questions appear in **output window below**
+    """)
 
 if __name__ == "__main__":
     main()
